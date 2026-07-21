@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "humao.rest-client",
+    "mongodb.mongodb-vscode",
+    "christian-kohler.npm-intellisense"
+  ]
+}
