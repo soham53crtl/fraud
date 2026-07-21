@@ -1,5 +1,15 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { requireAuth } from "../middleware/auth.js";
+import { classify as nbClassify, modelInfo as nbModelInfo } from "../ml/naiveBayes.js";
+
+const analyzeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many analysis requests. Please slow down." },
+});
 
 const router = Router();
 
@@ -47,29 +57,42 @@ const ACTIONS = {
 export async function runRiskEngine(text) {
   const input = text || "";
   const hits = SIGNAL_LIBRARY.filter((s) => s.re.test(input));
-  const score = Math.max(4, Math.min(98, hits.reduce((a, s) => a + s.w, 0)));
+  const regexScore = Math.max(4, Math.min(98, hits.reduce((a, s) => a + s.w, 0)));
+
+  // Trained model pass: bag-of-words Naive Bayes gives a category + a
+  // probability-calibrated confidence, independent of the exact phrases in
+  // SIGNAL_LIBRARY — this is what lets the system generalise to wording it
+  // has never seen, rather than only matching known phrases.
+  const nb = nbClassify(input);
+  const category = nb.confidence >= 30 ? nb.label : "Unclassified / Low Signal";
+
+  // Final score blends the regex evidence (explainable, phrase-level) with
+  // the model's category confidence (generalisable, statistical) — 65/35
+  // weighting keeps the explainable regex signals as the primary driver
+  // (important for the citizen-facing "why was this flagged" panel) while
+  // still letting the trained model pull score up/down for wording regex
+  // alone wouldn't catch.
+  const modelWeight = category === "Unclassified / Low Signal" ? 0 : nb.confidence;
+  const score = Math.max(4, Math.min(98, Math.round(regexScore * 0.65 + modelWeight * 0.35)));
   const band = score >= 70 ? "CRITICAL" : score >= 45 ? "ELEVATED" : score >= 20 ? "GUARDED" : "LOW";
 
-  let category = "Unclassified / Low Signal";
-  if (/digital arrest|virtual arrest/i.test(input)) category = "Digital Arrest Scam";
-  else if (/cbi|court notice|fir|warrant|customs/i.test(input)) category = "Fake Legal / Government Notice";
-  else if (/otp|upi pin|refund|cvv/i.test(input)) category = "Financial / UPI Fraud";
-  else if (/job offer|work from home|lottery|prize/i.test(input)) category = "Phishing / Job-Lure Scam";
+  const confidence = Math.min(97, Math.round(52 + hits.length * 6 + nb.confidence * 0.25));
 
   return {
     score,
     band,
     category,
-    confidence: Math.min(96, 52 + hits.length * 7),
+    confidence,
     hits: hits.map((h) => ({ label: h.label, weight: h.w })),
     actions: ACTIONS[band],
+    model: { name: nbModelInfo.type, categoryProbabilities: nb.probs },
     legalGuidance:
       "No Indian law-enforcement agency conducts arrests or investigations over phone/video call, nor demands payment for verification. Report to 1930 or cybercrime.gov.in.",
   };
 }
 
 // POST /api/ai/analyze — used by the Scam Detector UI, independent of filing a report
-router.post("/analyze", requireAuth, async (req, res, next) => {
+router.post("/analyze", requireAuth, analyzeLimiter, async (req, res, next) => {
   try {
     const { text } = req.body;
     if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });

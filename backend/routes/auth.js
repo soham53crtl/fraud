@@ -2,10 +2,20 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 import User from "../models/User.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
+
+// Brute-force protection: 10 attempts per 15 minutes per IP on login.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts. Please try again in a few minutes." },
+});
 
 function signToken(user) {
   return jwt.sign(
@@ -36,7 +46,7 @@ router.post("/signup", async (req, res, next) => {
 });
 
 // POST /api/auth/login
-router.post("/login", async (req, res, next) => {
+router.post("/login", loginLimiter, async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email: (email || "").toLowerCase() });
