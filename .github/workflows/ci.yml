@@ -1,11 +1,9 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
 jobs:
   backend-tests:
     name: Backend — Naive Bayes + Risk Engine tests
@@ -23,7 +21,6 @@ jobs:
       - name: Run automated tests (Naive Bayes classifier + risk engine)
         working-directory: backend
         run: npm run test
-
   frontend-build:
     name: Frontend — production build
     runs-on: ubuntu-latest
@@ -36,7 +33,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm install
       - name: Build (fails on any compile error)
         working-directory: frontend
         run: npm run build
